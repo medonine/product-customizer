@@ -18,6 +18,9 @@
       <h2 id="productName"></h2>
       <p id="productPrice"></p>
 
+      <label id="baseDesignLabel" for="baseDesignSelect">Design</label>
+      <select id="baseDesignSelect"></select>
+
       <label id="recipientLabel" for="recipientInput">Recipient Name</label>
       <input id="recipientInput" type="text" maxlength="40" />
 
@@ -27,11 +30,9 @@
       <label for="sizeSelect">Size</label>
       <select id="sizeSelect"></select>
 
-      <label>Add a design</label>
-      <div id="designPalette" class="design-palette"></div>
-      <label for="designUpload">Or upload your own image</label>
+      <label for="designUpload">Add an attachment</label>
       <input id="designUpload" type="file" accept="image/*" />
-      <p class="hint">Drag anything on the plaque to reposition it. Double-click an added design to remove it.</p>
+      <p class="hint">Drag anything on the plaque to reposition it. Double-click an added attachment to remove it.</p>
 
       <button id="addToCartButton">Add to Cart</button>
       <p id="statusMessage"></p>

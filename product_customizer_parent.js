@@ -12,8 +12,17 @@
 //    Pages, etc.) and get its URL, e.g. https://your-customizer.netlify.app
 // 2) On the dynamic page, add an HTML iframe / Custom Embed element,
 //    rename it #customizerFrame, and set its source to that URL.
-// 3) Same ProductCustomization collection as before (see the previous
-//    file for the exact field list).
+// 3) Same ProductCustomization collection as before (see the field list
+//    below).
+// 4) NEW — a "ProductDesigns" collection, one row per design option:
+//      - product     (Reference -> Stores/Products) which product this
+//                     design belongs to
+//      - label       (Text) name shown in the dropdown, e.g. "Classic Cup"
+//      - imageUrl    (Text) the photo to show — paste a link from Wix
+//                     Media Manager's "Copy image URL", or any image host
+//      - sortOrder   (Number, optional) controls dropdown order
+//    This is generic across product types — trophies, mugs, plaques,
+//    etc. each just get their own rows with `product` pointing at them.
 // =========================================================================
 
 import wixData from 'wix-data';
@@ -53,13 +62,32 @@ $w.onReady(async function () {
     });
 });
 
-function sendInit() {
+// Pulls this product's rows from the ProductDesigns collection — these
+// become the options in the "Design" dropdown. Works the same way for
+// any product type; just add rows pointing at whichever product needs
+// design options.
+async function loadBaseDesigns() {
+    const result = await wixData.query('ProductDesigns')
+        .eq('product', currentProduct._id)
+        .ascending('sortOrder')
+        .find();
+
+    return result.items.map((item) => ({
+        id: item._id,
+        label: item.label,
+        image: item.imageUrl,
+    }));
+}
+
+async function sendInit() {
     let sizeMap = {};
     try {
         sizeMap = JSON.parse(customConfig.sizeScaleMap || '{}');
     } catch (e) {
         console.warn('sizeScaleMap is not valid JSON for this product', e);
     }
+
+    const baseDesigns = await loadBaseDesigns();
 
     $w('#customizerFrame').postMessage({
         type: 'INIT',
@@ -69,6 +97,10 @@ function sendInit() {
             price: currentProduct.price,
             recipientLabel: customConfig.recipientLabel,
             titleLabel: customConfig.titleLabel,
+            // Optional: lets each product call its design picker something
+            // different — "Trophy Design", "Mug Style", "Plaque Shape", etc.
+            // Defaults to "Design" if left blank on the ProductCustomization row.
+            designSelectLabel: customConfig.designSelectLabel,
             maxNameLength: customConfig.maxNameLength,
             maxTitleLength: customConfig.maxTitleLength,
             previewFontSize: customConfig.previewFontSize,
@@ -76,14 +108,20 @@ function sendInit() {
             previewMaxWidth: customConfig.previewMaxWidth,
             requireRecipientName: customConfig.requireRecipientName,
             sizeScaleMap: sizeMap,
+            baseDesigns: baseDesigns,
         },
     });
 }
 
 async function handleAddToCart(payload) {
-    const { recipientName, title, size, recipientPosition, titlePosition, designs } = payload;
+    const { recipientName, title, size, baseDesign, recipientPosition, titlePosition, designs } = payload;
 
     const customTextFields = [];
+    // Record which base design the shopper picked, so production/
+    // fulfillment knows which photo/shape to use.
+    if (baseDesign && baseDesign.label) {
+        customTextFields.push({ title: 'Design', value: baseDesign.label });
+    }
     if (recipientName) {
         customTextFields.push({ title: customConfig.recipientLabel || 'Recipient Name', value: recipientName });
     }

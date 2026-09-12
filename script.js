@@ -28,40 +28,45 @@ const els = {
   recipientInput: document.getElementById('recipientInput'),
   titleInput: document.getElementById('titleInput'),
   sizeSelect: document.getElementById('sizeSelect'),
-  designPalette: document.getElementById('designPalette'),
+  baseDesignLabel: document.getElementById('baseDesignLabel'),
+  baseDesignSelect: document.getElementById('baseDesignSelect'),
   designUpload: document.getElementById('designUpload'),
   addToCartButton: document.getElementById('addToCartButton'),
   statusMessage: document.getElementById('statusMessage'),
 };
 
-// A small built-in set of designs so this works with no external hosting.
-// Swap these `src` values for your real logo/clip-art image URLs any time.
-const PRESET_DESIGNS = [
+// =========================================================================
+// FALLBACK DESIGNS — used only if the parent page couldn't find any rows
+// in the ProductDesigns collection for this product (e.g. not set up
+// yet). In normal operation, the design list comes from INIT's
+// `baseDesigns`, sourced from that database — see product_customizer_parent.js.
+// =========================================================================
+const FALLBACK_DESIGNS = [
   {
-    id: 'star',
-    label: 'Star',
-    src:
+    id: 'classic-cup',
+    label: 'Classic Cup',
+    image:
       'data:image/svg+xml;utf8,' +
       encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><polygon points="12,2 15,9 22,9 16.5,13.5 18.5,21 12,17 5.5,21 7.5,13.5 2,9 9,9" fill="#b8232f"/></svg>`
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="70" y="200" width="60" height="16" rx="2" fill="#8a6d1f"/><rect x="85" y="170" width="30" height="34" fill="#d4af37"/><path d="M60 40h80v40c0 30-18 55-40 60-22-5-40-30-40-60V40z" fill="#d4af37"/><path d="M60 55c-20-4-32 8-30 24 2 14 16 22 32 20" stroke="#b8952a" stroke-width="6" fill="none"/><path d="M140 55c20-4 32 8 30 24-2 14-16 22-32 20" stroke="#b8952a" stroke-width="6" fill="none"/></svg>`
       ),
   },
   {
-    id: 'ribbon',
-    label: 'Ribbon',
-    src:
+    id: 'star-cup',
+    label: 'Star Cup',
+    image:
       'data:image/svg+xml;utf8,' +
       encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6" fill="#d4af37"/><polygon points="8,13 6,22 12,18 18,22 16,13" fill="#b8232f"/></svg>`
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="70" y="200" width="60" height="16" rx="2" fill="#5c5c5c"/><rect x="85" y="170" width="30" height="34" fill="#c0c0c0"/><path d="M60 40h80v40c0 30-18 55-40 60-22-5-40-30-40-60V40z" fill="#c0c0c0"/><polygon points="100,55 108,72 126,72 111,83 117,101 100,90 83,101 89,83 74,72 92,72" fill="#b8232f"/></svg>`
       ),
   },
   {
-    id: 'laurel',
-    label: 'Laurel',
-    src:
+    id: 'shield',
+    label: 'Shield',
+    image:
       'data:image/svg+xml;utf8,' +
       encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 20c4-6 4-12 0-18" stroke="#2e7d32" stroke-width="2" fill="none"/><path d="M20 20c-4-6-4-12 0-18" stroke="#2e7d32" stroke-width="2" fill="none"/></svg>`
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="80" y="190" width="40" height="30" fill="#4a4a4a"/><path d="M40 30h120v70c0 55-40 90-60 100-20-10-60-45-60-100V30z" fill="#3f6fb0"/><path d="M40 30h120v20H40z" fill="#2e5690"/></svg>`
       ),
   },
 ];
@@ -154,6 +159,59 @@ function centerElement(el, container, verticalFraction) {
   el.style.top = `${Math.max(0, top)}px`;
 }
 
+// --- trophy design (base image) selection ------------------------------
+
+// Works out which image should currently be shown as the base product
+// photo. Priority: an image the chosen trophy design defines specifically
+// for the chosen size > an image the size config defines (legacy behavior)
+// > the trophy design's own default image > the original product photo.
+function updateProductImage() {
+  const design = (state.baseDesigns || []).find((d) => d.id === state.currentDesignId);
+  const sizeConfig = state.currentSizeKey ? (state.config.sizeScaleMap || {})[state.currentSizeKey] : null;
+
+  const sizeSpecificDesignImage =
+    design && design.sizeImages && design.sizeImages[state.currentSizeKey];
+
+  els.productImage.src =
+    sizeSpecificDesignImage ||
+    (sizeConfig && sizeConfig.image) ||
+    (design && design.image) ||
+    state.config.productImage ||
+    '';
+}
+
+function applyBaseDesign(id) {
+  const design = (state.baseDesigns || []).find((d) => d.id === id);
+  if (!design) return;
+
+  state.currentDesignId = id;
+  state.currentDesignLabel = design.label;
+
+  updateProductImage();
+}
+
+function setupBaseDesignSelect() {
+  const designs =
+    state.config.baseDesigns && state.config.baseDesigns.length
+      ? state.config.baseDesigns
+      : FALLBACK_DESIGNS;
+
+  state.baseDesigns = designs;
+
+  els.baseDesignLabel.textContent = state.config.designSelectLabel || 'Design';
+
+  els.baseDesignSelect.innerHTML = designs
+    .map((d) => `<option value="${d.id}">${d.label}</option>`)
+    .join('');
+
+  els.baseDesignSelect.onchange = () => applyBaseDesign(els.baseDesignSelect.value);
+
+  if (designs.length) {
+    els.baseDesignSelect.value = designs[0].id;
+    applyBaseDesign(designs[0].id);
+  }
+}
+
 // --- designs ----------------------------------------------------------
 
 function addDesign(src) {
@@ -175,18 +233,6 @@ function addDesign(src) {
 
   makeDraggable(img, els.previewStage);
   state.designs.push({ id: `${Date.now()}`, el: img, src });
-}
-
-function setupDesignPalette() {
-  els.designPalette.innerHTML = '';
-  PRESET_DESIGNS.forEach((design) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.title = design.label;
-    btn.innerHTML = `<img src="${design.src}" alt="${design.label}" />`;
-    btn.addEventListener('click', () => addDesign(design.src));
-    els.designPalette.appendChild(btn);
-  });
 }
 
 els.designUpload.addEventListener('change', (e) => {
@@ -212,7 +258,7 @@ function applySize(sizeKey) {
   const sizeConfig = (state.config.sizeScaleMap || {})[sizeKey];
   if (!sizeConfig) return;
   state.currentSizeKey = sizeKey;
-  if (sizeConfig.image) els.productImage.src = sizeConfig.image;
+  updateProductImage();
   document.querySelector('.preview-stage').style.transform = sizeConfig.scale
     ? `scale(${sizeConfig.scale})`
     : 'scale(1)';
@@ -261,8 +307,8 @@ function initFromConfig(payload) {
   state.designs = [];
 
   applyStyles();
+  setupBaseDesignSelect();
   setupSizeSelect();
-  setupDesignPalette();
 
   // Give the text elements a sensible starting position, then let the
   // customer drag them anywhere from there.
@@ -319,6 +365,9 @@ els.addToCartButton.addEventListener('click', () => {
         recipientName,
         title,
         size: state.currentSizeKey,
+        baseDesign: state.currentDesignId
+          ? { id: state.currentDesignId, label: state.currentDesignLabel }
+          : null,
         recipientPosition: relativePosition(els.previewText),
         titlePosition: relativePosition(els.previewTitleText),
         designs: state.designs.map((d) => ({
