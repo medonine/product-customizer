@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Product Customizer</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="customizer">
+    <div class="preview-stage" id="previewStage">
+      <img id="productImage" src="" alt="Product preview" />
+      <div id="previewText" class="preview-text draggable"></div>
+      <div id="previewTitleText" class="preview-text preview-title draggable"></div>
+    </div>
+
+    <div class="controls">
+      <h2 id="productName"></h2>
+      <p id="productPrice"></p>
+
+      <label id="recipientLabel" for="recipientInput">Recipient Name</label>
+      <input id="recipientInput" type="text" maxlength="40" />
+
+      <label id="titleLabel" for="titleInput">Title</label>
+      <input id="titleInput" type="text" maxlength="40" />
+
+      <label for="sizeSelect">Size</label>
+      <select id="sizeSelect"></select>
+
+      <label>Add a design</label>
+      <div id="designPalette" class="design-palette"></div>
+      <label for="designUpload">Or upload your own image</label>
+      <input id="designUpload" type="file" accept="image/*" />
+      <p class="hint">Drag anything on the plaque to reposition it. Double-click an added design to remove it.</p>
+
+      <button id="addToCartButton">Add to Cart</button>
+      <p id="statusMessage"></p>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

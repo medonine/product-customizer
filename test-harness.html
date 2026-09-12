@@ -1,0 +1,32 @@
+<iframe id="frame" src="index.html" width="700" height="450"></iframe>
+<script>
+  const frame = document.getElementById('frame');
+  window.addEventListener('message', (e) => {
+    if (e.data.type === 'CUSTOMIZER_READY') {
+      frame.contentWindow.postMessage({
+        type: 'INIT',
+        payload: {
+          productImage: 'images.jpg',
+          productName: 'Test Plaque',
+          price: '2299.00',
+          recipientLabel: 'Recipient Name',
+          titleLabel: 'Title',
+          maxNameLength: 40,
+          maxTitleLength: 40,
+          previewFontSize: 24,
+          previewFontColor: '#1a1a1a',
+          previewMaxWidth: 200,
+          requireRecipientName: true,
+          sizeScaleMap: {
+            '6 inches': { scale: 0.8 },
+            '8 inches': { scale: 1.0 }
+          }
+        }
+      }, '*');
+    }
+    if (e.data.type === 'ADD_TO_CART') {
+      console.log('Would add to cart:', e.data.payload);
+      frame.contentWindow.postMessage({ type: 'ADD_TO_CART_SUCCESS' }, '*');
+    }
+  });
+</script>
