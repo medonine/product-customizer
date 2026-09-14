@@ -2,17 +2,36 @@
 // Product Customizer — standalone app (runs inside the Wix iframe/HTML
 // embed). Talks to the Wix Velo parent page via window.postMessage.
 //
-// Message contract (see README.md for full details):
-//   Parent -> iframe: { type: 'INIT', payload: {...productConfig} }
+// This version is catalog-driven: the customer picks a Product Type
+// (category) and a Design Series (an actual, separate Wix Stores product
+// with its own price) before personalizing. It no longer depends on being
+// embedded on any specific product's page — the parent sends the WHOLE
+// customizable catalog at once.
+//
+// Message contract:
+//   Parent -> iframe: { type: 'INIT', payload: { catalog: [...] } }
 //   Parent -> iframe: { type: 'ADD_TO_CART_SUCCESS' }
 //   Parent -> iframe: { type: 'ADD_TO_CART_ERROR', payload: { message } }
 //   iframe -> Parent: { type: 'CUSTOMIZER_READY' }
-//   iframe -> Parent: { type: 'ADD_TO_CART', payload: { recipientName, title, size } }
+//   iframe -> Parent: { type: 'ADD_TO_CART', payload: {
+//       productId, recipientName, title, size,
+//       recipientPosition, titlePosition, designs
+//   } }
+//
+// Each catalog entry (one "design series"):
+//   {
+//     productId, category, displayName, price, previewImage,
+//     recipientLabel, titleLabel, maxNameLength, maxTitleLength,
+//     previewFontSize, previewFontColor, previewMaxWidth,
+//     requireRecipientName, sizeScaleMap
+//   }
 // =========================================================================
 
 const state = {
-  config: null,
+  catalog: [],
+  selectedSeries: null,
   currentSizeKey: null,
+  currentFontFamily: "Georgia, 'Times New Roman', serif",
   designs: [], // { id, el, src }
 };
 
@@ -23,67 +42,33 @@ const els = {
   previewTitleText: document.getElementById('previewTitleText'),
   productName: document.getElementById('productName'),
   productPrice: document.getElementById('productPrice'),
+  categorySelect: document.getElementById('categorySelect'),
+  seriesSelect: document.getElementById('seriesSelect'),
+  fontSelect: document.getElementById('fontSelect'),
+  fontUpload: document.getElementById('fontUpload'),
   recipientLabel: document.getElementById('recipientLabel'),
   titleLabel: document.getElementById('titleLabel'),
   recipientInput: document.getElementById('recipientInput'),
   titleInput: document.getElementById('titleInput'),
   sizeSelect: document.getElementById('sizeSelect'),
-  baseDesignLabel: document.getElementById('baseDesignLabel'),
-  baseDesignSelect: document.getElementById('baseDesignSelect'),
   designUpload: document.getElementById('designUpload'),
   addToCartButton: document.getElementById('addToCartButton'),
   statusMessage: document.getElementById('statusMessage'),
 };
 
-// =========================================================================
-// FALLBACK DESIGNS — used only if the parent page couldn't find any rows
-// in the ProductDesigns collection for this product (e.g. not set up
-// yet). In normal operation, the design list comes from INIT's
-// `baseDesigns`, sourced from that database — see product_customizer_parent.js.
-// =========================================================================
-const FALLBACK_DESIGNS = [
-  {
-    id: 'classic-cup',
-    label: 'Classic Cup',
-    image:
-      'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="70" y="200" width="60" height="16" rx="2" fill="#8a6d1f"/><rect x="85" y="170" width="30" height="34" fill="#d4af37"/><path d="M60 40h80v40c0 30-18 55-40 60-22-5-40-30-40-60V40z" fill="#d4af37"/><path d="M60 55c-20-4-32 8-30 24 2 14 16 22 32 20" stroke="#b8952a" stroke-width="6" fill="none"/><path d="M140 55c20-4 32 8 30 24-2 14-16 22-32 20" stroke="#b8952a" stroke-width="6" fill="none"/></svg>`
-      ),
-  },
-  {
-    id: 'star-cup',
-    label: 'Star Cup',
-    image:
-      'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="70" y="200" width="60" height="16" rx="2" fill="#5c5c5c"/><rect x="85" y="170" width="30" height="34" fill="#c0c0c0"/><path d="M60 40h80v40c0 30-18 55-40 60-22-5-40-30-40-60V40z" fill="#c0c0c0"/><polygon points="100,55 108,72 126,72 111,83 117,101 100,90 83,101 89,83 74,72 92,72" fill="#b8232f"/></svg>`
-      ),
-  },
-  {
-    id: 'shield',
-    label: 'Shield',
-    image:
-      'data:image/svg+xml;utf8,' +
-      encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><rect x="80" y="190" width="40" height="30" fill="#4a4a4a"/><path d="M40 30h120v70c0 55-40 90-60 100-20-10-60-45-60-100V30z" fill="#3f6fb0"/><path d="M40 30h120v20H40z" fill="#2e5690"/></svg>`
-      ),
-  },
-];
-
 // --- text fitting -------------------------------------------------------
 
-function measureTextWidth(text, fontSize, fontFamily = 'Georgia, serif') {
+function measureTextWidth(text, fontSize, fontFamily) {
   measureTextWidth._canvas = measureTextWidth._canvas || document.createElement('canvas');
   const ctx = measureTextWidth._canvas.getContext('2d');
   ctx.font = `${fontSize}px ${fontFamily}`;
   return ctx.measureText(text).width;
 }
 
-function fitText(el, text, maxWidth, baseFontSize) {
+function fitText(el, text, maxWidth, baseFontSize, fontFamily) {
   el.textContent = text;
   let fontSize = baseFontSize;
-  while (text && measureTextWidth(text, fontSize) > maxWidth && fontSize > 10) {
+  while (text && measureTextWidth(text, fontSize, fontFamily) > maxWidth && fontSize > 10) {
     fontSize -= 1;
   }
   el.style.fontSize = `${fontSize}px`;
@@ -159,60 +144,54 @@ function centerElement(el, container, verticalFraction) {
   el.style.top = `${Math.max(0, top)}px`;
 }
 
-// --- trophy design (base image) selection ------------------------------
+// --- font selection -------------------------------------------------------
 
-// Works out which image should currently be shown as the base product
-// photo. Priority: an image the chosen trophy design defines specifically
-// for the chosen size > an image the size config defines (legacy behavior)
-// > the trophy design's own default image > the original product photo.
-function updateProductImage() {
-  const design = (state.baseDesigns || []).find((d) => d.id === state.currentDesignId);
-  const sizeConfig = state.currentSizeKey ? (state.config.sizeScaleMap || {})[state.currentSizeKey] : null;
+// Applies a font-family string to both preview text elements and re-fits
+// their current text, since a new font changes how wide the text renders.
+function applyFont(fontFamily) {
+  state.currentFontFamily = fontFamily;
+  els.previewText.style.fontFamily = fontFamily;
+  els.previewTitleText.style.fontFamily = fontFamily;
 
-  const sizeSpecificDesignImage =
-    design && design.sizeImages && design.sizeImages[state.currentSizeKey];
-
-  els.productImage.src =
-    sizeSpecificDesignImage ||
-    (sizeConfig && sizeConfig.image) ||
-    (design && design.image) ||
-    state.config.productImage ||
-    '';
+  if (!state.selectedSeries) return;
+  const maxWidth = state.selectedSeries.previewMaxWidth || 200;
+  const baseFontSize = state.selectedSeries.previewFontSize || 24;
+  fitText(els.previewText, els.recipientInput.value, maxWidth, baseFontSize, fontFamily);
+  fitText(els.previewTitleText, els.titleInput.value, maxWidth, baseFontSize * 0.7, fontFamily);
 }
 
-function applyBaseDesign(id) {
-  const design = (state.baseDesigns || []).find((d) => d.id === id);
-  if (!design) return;
+els.fontSelect.addEventListener('change', () => {
+  applyFont(els.fontSelect.value);
+});
 
-  state.currentDesignId = id;
-  state.currentDesignLabel = design.label;
+els.fontUpload.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
 
-  updateProductImage();
-}
+  try {
+    const buffer = await file.arrayBuffer();
+    const fontName = `CustomFont_${Date.now()}`;
+    const fontFace = new FontFace(fontName, buffer);
+    await fontFace.load();
+    document.fonts.add(fontFace);
 
-function setupBaseDesignSelect() {
-  const designs =
-    state.config.baseDesigns && state.config.baseDesigns.length
-      ? state.config.baseDesigns
-      : FALLBACK_DESIGNS;
+    // Add it as a real option so it's visible/selectable, then select it
+    const option = document.createElement('option');
+    option.value = `'${fontName}', sans-serif`;
+    option.textContent = file.name.replace(/\.[^.]+$/, '');
+    els.fontSelect.appendChild(option);
+    els.fontSelect.value = option.value;
 
-  state.baseDesigns = designs;
-
-  els.baseDesignLabel.textContent = state.config.designSelectLabel || 'Design';
-
-  els.baseDesignSelect.innerHTML = designs
-    .map((d) => `<option value="${d.id}">${d.label}</option>`)
-    .join('');
-
-  els.baseDesignSelect.onchange = () => applyBaseDesign(els.baseDesignSelect.value);
-
-  if (designs.length) {
-    els.baseDesignSelect.value = designs[0].id;
-    applyBaseDesign(designs[0].id);
+    applyFont(option.value);
+  } catch (err) {
+    console.error('Could not load uploaded font', err);
+    els.statusMessage.textContent = "Couldn't load that font file — try a .ttf, .otf, or .woff.";
+  } finally {
+    e.target.value = ''; // allow re-uploading the same file later
   }
-}
+});
 
-// --- designs ----------------------------------------------------------
+// --- designs (draggable clip-art/uploaded stickers) ---------------------
 
 function addDesign(src) {
   const img = document.createElement('img');
@@ -244,18 +223,20 @@ els.designUpload.addEventListener('change', (e) => {
   e.target.value = ''; // allow uploading the same file again later
 });
 
-// --- config / rendering ---------------------------------------------------
+// --- product image ---------------------------------------------------
 
-function applyStyles() {
-  const { previewFontSize = 24, previewFontColor = '#1a1a1a' } = state.config;
-  els.previewText.style.color = previewFontColor;
-  els.previewTitleText.style.color = previewFontColor;
-  els.previewText.style.fontSize = `${previewFontSize}px`;
-  els.previewTitleText.style.fontSize = `${Math.round(previewFontSize * 0.7)}px`;
+function updateProductImage() {
+  const sizeConfig = state.currentSizeKey
+    ? (state.selectedSeries.sizeScaleMap || {})[state.currentSizeKey]
+    : null;
+
+  els.productImage.src = (sizeConfig && sizeConfig.image) || state.selectedSeries.previewImage || '';
 }
 
+// --- size ---------------------------------------------------------------
+
 function applySize(sizeKey) {
-  const sizeConfig = (state.config.sizeScaleMap || {})[sizeKey];
+  const sizeConfig = (state.selectedSeries.sizeScaleMap || {})[sizeKey];
   if (!sizeConfig) return;
   state.currentSizeKey = sizeKey;
   updateProductImage();
@@ -265,8 +246,7 @@ function applySize(sizeKey) {
 }
 
 function setupSizeSelect() {
-  const sizeKeys = Object.keys(state.config.sizeScaleMap || {});
-  const sizeRow = els.sizeSelect.closest('div') || els.sizeSelect;
+  const sizeKeys = Object.keys(state.selectedSeries.sizeScaleMap || {});
   const sizeLabel = document.querySelector('label[for="sizeSelect"]');
 
   if (sizeKeys.length === 0) {
@@ -278,22 +258,27 @@ function setupSizeSelect() {
   if (sizeLabel) sizeLabel.style.display = '';
   els.sizeSelect.style.display = '';
   els.sizeSelect.innerHTML = sizeKeys.map((k) => `<option value="${k}">${k}</option>`).join('');
-  applySize(sizeKeys[0]);
   els.sizeSelect.value = sizeKeys[0];
+  applySize(sizeKeys[0]);
   els.sizeSelect.onchange = () => applySize(els.sizeSelect.value);
 }
 
-function initFromConfig(payload) {
-  state.config = payload;
+// --- applying a chosen design series ------------------------------------
 
-  els.productImage.src = payload.productImage || '';
-  els.productName.textContent = payload.productName || '';
-  els.productPrice.textContent = payload.price ? `\u20b1${payload.price}` : '';
+function applySeries(productId) {
+  const series = state.catalog.find((s) => s.productId === productId);
+  if (!series) return;
 
-  els.recipientLabel.textContent = payload.recipientLabel || 'Recipient Name';
-  els.titleLabel.textContent = payload.titleLabel || 'Title';
-  els.recipientInput.maxLength = payload.maxNameLength || 40;
-  els.titleInput.maxLength = payload.maxTitleLength || 40;
+  state.selectedSeries = series;
+  state.currentSizeKey = null;
+
+  els.productName.textContent = series.displayName || '';
+  els.productPrice.textContent = series.price ? `\u20b1${series.price}` : '';
+
+  els.recipientLabel.textContent = series.recipientLabel || 'Recipient Name';
+  els.titleLabel.textContent = series.titleLabel || 'Title';
+  els.recipientInput.maxLength = series.maxNameLength || 40;
+  els.titleInput.maxLength = series.maxTitleLength || 40;
 
   els.previewText.textContent = '';
   els.previewTitleText.textContent = '';
@@ -302,44 +287,97 @@ function initFromConfig(payload) {
   els.statusMessage.textContent = '';
   els.addToCartButton.disabled = false;
 
-  // Clear any designs left over from a previous product
+  // Clear any designs left over from a previous series
   state.designs.forEach((d) => d.el.remove());
   state.designs = [];
 
-  applyStyles();
-  setupBaseDesignSelect();
-  setupSizeSelect();
+  els.previewText.style.color = series.previewFontColor || '#1a1a1a';
+  els.previewTitleText.style.color = series.previewFontColor || '#1a1a1a';
+  els.previewText.style.fontSize = `${series.previewFontSize || 24}px`;
+  els.previewTitleText.style.fontSize = `${Math.round((series.previewFontSize || 24) * 0.7)}px`;
 
-  // Give the text elements a sensible starting position, then let the
-  // customer drag them anywhere from there.
+  // Reset font choice to the default preset for each new series, clearing
+  // out any custom-uploaded font options left from a previous series
+  Array.from(els.fontSelect.options)
+    .filter((opt) => !opt.classList.contains('preset-font-option'))
+    .forEach((opt) => opt.remove());
+  els.fontSelect.selectedIndex = 0;
+  applyFont(els.fontSelect.value);
+
+  setupSizeSelect();
+  updateProductImage();
+
   centerElement(els.previewText, els.previewStage, 0.55);
   centerElement(els.previewTitleText, els.previewStage, 0.68);
   makeDraggable(els.previewText, els.previewStage);
   makeDraggable(els.previewTitleText, els.previewStage);
 }
 
+// --- category / design series pickers ------------------------------------
+
+function setupSeriesSelectForCategory(category) {
+  const seriesForCategory = state.catalog.filter((s) => s.category === category);
+
+  els.seriesSelect.innerHTML = seriesForCategory
+    .map((s) => `<option value="${s.productId}">${s.displayName}</option>`)
+    .join('');
+
+  els.seriesSelect.onchange = () => applySeries(els.seriesSelect.value);
+
+  if (seriesForCategory.length) {
+    els.seriesSelect.value = seriesForCategory[0].productId;
+    applySeries(seriesForCategory[0].productId);
+  }
+}
+
+function setupCategorySelect() {
+  const categories = [...new Set(state.catalog.map((s) => s.category).filter(Boolean))];
+
+  els.categorySelect.innerHTML = categories
+    .map((c) => `<option value="${c}">${c}</option>`)
+    .join('');
+
+  els.categorySelect.onchange = () => setupSeriesSelectForCategory(els.categorySelect.value);
+
+  if (categories.length) {
+    els.categorySelect.value = categories[0];
+    setupSeriesSelectForCategory(categories[0]);
+  }
+}
+
+function initCatalog(payload) {
+  state.catalog = payload.catalog || [];
+
+  if (state.catalog.length === 0) {
+    els.statusMessage.textContent = 'No customizable products are set up yet.';
+    return;
+  }
+
+  setupCategorySelect();
+}
+
 // --- input handlers ---------------------------------------------------
 
 els.recipientInput.addEventListener('input', () => {
-  if (!state.config) return;
-  const maxWidth = state.config.previewMaxWidth || 200;
-  const baseFontSize = state.config.previewFontSize || 24;
-  fitText(els.previewText, els.recipientInput.value, maxWidth, baseFontSize);
+  if (!state.selectedSeries) return;
+  const maxWidth = state.selectedSeries.previewMaxWidth || 200;
+  const baseFontSize = state.selectedSeries.previewFontSize || 24;
+  fitText(els.previewText, els.recipientInput.value, maxWidth, baseFontSize, state.currentFontFamily);
 });
 
 els.titleInput.addEventListener('input', () => {
-  if (!state.config) return;
-  const maxWidth = state.config.previewMaxWidth || 200;
-  const baseFontSize = (state.config.previewFontSize || 24) * 0.7;
-  fitText(els.previewTitleText, els.titleInput.value, maxWidth, baseFontSize);
+  if (!state.selectedSeries) return;
+  const maxWidth = state.selectedSeries.previewMaxWidth || 200;
+  const baseFontSize = (state.selectedSeries.previewFontSize || 24) * 0.7;
+  fitText(els.previewTitleText, els.titleInput.value, maxWidth, baseFontSize, state.currentFontFamily);
 });
 
 els.addToCartButton.addEventListener('click', () => {
-  if (!state.config) return;
+  if (!state.selectedSeries) return;
   const recipientName = els.recipientInput.value.trim();
   const title = els.titleInput.value.trim();
 
-  if (state.config.requireRecipientName && !recipientName) {
+  if (state.selectedSeries.requireRecipientName && !recipientName) {
     els.statusMessage.textContent = 'Please enter a recipient name.';
     return;
   }
@@ -362,11 +400,12 @@ els.addToCartButton.addEventListener('click', () => {
     {
       type: 'ADD_TO_CART',
       payload: {
+        productId: state.selectedSeries.productId,
         recipientName,
         title,
         size: state.currentSizeKey,
-        baseDesign: state.currentDesignId
-          ? { id: state.currentDesignId, label: state.currentDesignLabel }
+        font: els.fontSelect.options[els.fontSelect.selectedIndex]
+          ? els.fontSelect.options[els.fontSelect.selectedIndex].textContent
           : null,
         recipientPosition: relativePosition(els.previewText),
         titlePosition: relativePosition(els.previewTitleText),
@@ -386,7 +425,7 @@ window.addEventListener('message', (event) => {
   const { type, payload } = event.data || {};
 
   if (type === 'INIT') {
-    initFromConfig(payload);
+    initCatalog(payload);
   }
 
   if (type === 'ADD_TO_CART_SUCCESS') {
@@ -400,5 +439,5 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// Tell the parent we're loaded and ready to receive product config
+// Tell the parent we're loaded and ready to receive the catalog
 window.parent.postMessage({ type: 'CUSTOMIZER_READY' }, '*');

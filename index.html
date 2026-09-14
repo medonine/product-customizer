@@ -18,14 +18,28 @@
       <h2 id="productName"></h2>
       <p id="productPrice"></p>
 
-      <label id="baseDesignLabel" for="baseDesignSelect">Design</label>
-      <select id="baseDesignSelect"></select>
+      <label for="categorySelect">Product Type</label>
+      <select id="categorySelect"></select>
+
+      <label for="seriesSelect">Design Series</label>
+      <select id="seriesSelect"></select>
 
       <label id="recipientLabel" for="recipientInput">Recipient Name</label>
       <input id="recipientInput" type="text" maxlength="40" />
 
       <label id="titleLabel" for="titleInput">Title</label>
       <input id="titleInput" type="text" maxlength="40" />
+
+      <label for="fontSelect">Font</label>
+      <select id="fontSelect">
+        <option class="preset-font-option" value="Georgia, 'Times New Roman', serif">Classic Serif</option>
+        <option class="preset-font-option" value="Arial, Helvetica, sans-serif">Modern Sans</option>
+        <option class="preset-font-option" value="'Brush Script MT', 'Segoe Script', cursive">Script</option>
+        <option class="preset-font-option" value="Impact, 'Arial Narrow', sans-serif">Bold Impact</option>
+        <option class="preset-font-option" value="'Courier New', monospace">Typewriter</option>
+      </select>
+      <label for="fontUpload">Or upload your own font (.ttf/.otf/.woff/.woff2)</label>
+      <input id="fontUpload" type="file" accept=".ttf,.otf,.woff,.woff2" />
 
       <label for="sizeSelect">Size</label>
       <select id="sizeSelect"></select>
